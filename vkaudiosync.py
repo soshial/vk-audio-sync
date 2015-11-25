@@ -19,7 +19,7 @@ from progressbar import ProgressBar
 def get_token(client_id, **user):
     if not user.get('scope'):
         user['scope'] = (['audio'])
-    
+
     token, uid = vk_api.auth(
         user.get('username'),
         user.get('password'),
@@ -40,16 +40,18 @@ def get_audio(token, uid):
 
 
 def clean_audio_tag(tag):
+    # todo support utf8
     h = HTMLParser.HTMLParser()
     tag = h.unescape(tag)
-    tag = h.unescape(tag) # need to unescape unescaped entities
+    tag = h.unescape(tag)  # need to unescape unescaped entities
 
-    tag = re.sub(r'http://.[^\s]+', '', tag) # remove any urls
-    tag = tag.replace(' :)','') # remove smiles
-    
-    ctag = re.compile(u'[^a-zA-Zа-яА-ЯёЁ0-9\s_\.,&#!?\-\'"`\/\|\[\]\(\)]') 
-    tag = ctag.sub('', tag).strip() # kill most unusual symbols
-    tag = re.sub(r'\s+', ' ', tag) # remove long spaces
+    tag = re.sub(r'http://.[^\s]+', '', tag)  # remove any urls
+    tag = tag.replace(' :)','')  # remove smiles
+
+    tag = re.sub('’', '', tag).strip()  # quotation mark -> apostrophe
+    ctag = re.compile(u'[^\w\s_\.,&#!?\-\'"`\/\|\[\]\(\)]', re.U)
+    tag = ctag.sub('', tag).strip()  # kill most unusual symbols
+    tag = re.sub(r'\s+', ' ', tag)  # remove long spaces
 
     return tag
 
@@ -62,7 +64,7 @@ def set_id3(filename, **track):
 
     mp3info['title'] = track.get('title')
     mp3info['artist'] = track.get('artist')
-    mp3info.save(filename) 
+    mp3info.save(filename)
 
 
 def save_tracks(filename, tracks):
@@ -90,7 +92,7 @@ def open_tracks(filename):
 def download_tracks(tracks, storage_path='files'):
     if tracks and not os.path.exists(storage_path):
         os.makedirs(storage_path)
-    
+
     track_cnt = 1
     for track in tracks:
         track['aid'] = str(track.get('aid'))
@@ -101,16 +103,17 @@ def download_tracks(tracks, storage_path='files'):
         filepath = os.path.join(storage_path, "%s_%s" % (track.get('aid'), filename))
 
         if os.path.isfile(filepath):
+            # todo support aborted downloads
             print 'Skipped "%(artist)s - %(title)s"' % (track)
             continue
 
         print '[%d/%d] ' % (track_cnt, len(tracks)) + 'Downloading "%(artist)s - %(title)s"...' % (track)
-        
+
         try:
             req = urllib2.urlopen(track.get('url'))
             total = req.headers.get('content-length') or 0
             #print "total: %s" % (total)
-            
+
             bar = None
             if total:
                 bar = ProgressBar(maxval=int(total)).start()
@@ -118,29 +121,29 @@ def download_tracks(tracks, storage_path='files'):
             with open(filepath, 'wb') as fp:
                 chunk_size = 16 * 1024
                 loaded = 0
-                
+
                 for chunk in iter(lambda: req.read(chunk_size), ''):
                     fp.write(chunk)
 
                     if total:
                         loaded += len(chunk)
                         bar.update(loaded)
-            
+
             if total:
                 bar.finish()
 
-            set_id3(filepath, **track)
-            track_cnt+=1
+            set_id3(filepath, **track)  # todo fix id3
+            track_cnt += 1
 
         except urllib2.HTTPError, err:
             print "HTTPError:", err
-            
+
         except IOError, err:
             print "IOError:", err
-    
-  
+
+
 def main():
-    
+
     playlist = 'playlist.txt'
     tracks = []
 
@@ -155,15 +158,15 @@ def main():
         client_id = config.CLIENT_ID
 
         tracks = get_audio(*get_token(client_id, **user))
+        # todo support albums
+        # todo fetch lyrics
         save_tracks(playlist, tracks)
 
     else:
         tracks = list(open_tracks(playlist))
 
-
     download_tracks(tracks, 'files')
-    
-    
+
     print 'done.'
 
 
