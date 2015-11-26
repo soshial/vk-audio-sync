@@ -8,6 +8,7 @@ import codecs
 import re
 import HTMLParser
 from mutagen.easyid3 import EasyID3
+# from mutagen.mp3 import EasyMP3 as MP3
 from mutagen.id3 import ID3NoHeaderError
 
 import vk_api
@@ -15,6 +16,7 @@ import config
 
 from time import time
 from progressbar import ProgressBar
+
 
 def get_token(client_id, **user):
     if not user.get('scope'):
@@ -27,7 +29,7 @@ def get_token(client_id, **user):
         ",".join(user.get('scope'))
     )
 
-    return (token, uid)
+    return token, uid
 
 
 def get_audio(token, uid):
@@ -67,6 +69,19 @@ def set_id3(filename, **track):
     mp3info.save(filename)
 
 
+# def set_id3(filename, **track):
+#     try:
+#         mp3info = MP3(filename)
+#     except ID3NoHeaderError:
+#         mp3info = ID3()
+# 
+#     mp3info['artist'] = track.get('artist')
+#     mp3info['TIT2'] = TIT2(encoding=3, text=track.get('title'))
+#     mp3info.save(filename)
+#     print(mp3info)
+#     quit()
+
+
 def save_tracks(filename, tracks):
     if not tracks:
         return
@@ -89,7 +104,7 @@ def open_tracks(filename):
             yield track
 
 
-def download_tracks(tracks, storage_path='files'):
+def download_tracks(tracks, token, uid, storage_path='files'):
     if tracks and not os.path.exists(storage_path):
         os.makedirs(storage_path)
 
@@ -133,6 +148,15 @@ def download_tracks(tracks, storage_path='files'):
                 bar.finish()
 
             set_id3(filepath, **track)  # todo fix id3
+
+            if track.get('lyrics_id'):
+                print "Lyrics exist!"
+                track['lyrics_id'] = clean_audio_tag(track.get('lyrics_id'))
+                res = vk_api.call_method('audio.getLyrics', {'lyrics_id': track['lyrics_id']}, token)
+                with codecs.open(filepath + '.txt', 'w', encoding='utf-8') as lyr_file:
+                    lyr_file.write(res.get('response')['text'])
+                    lyr_file.close()
+
             track_cnt += 1
 
         except urllib2.HTTPError, err:
@@ -147,17 +171,18 @@ def main():
     playlist = 'playlist.txt'
     tracks = []
 
+    # authorization (needed for lyrics and albums)
+    user = {
+        'username': config.USERNAME,
+        'password': config.PASSWORD,
+        'scope': (['audio']),
+    }
+    client_id = config.CLIENT_ID
+    token, uid = get_token(client_id, **user)
+
     if not os.path.isfile(playlist):
 
-        user = {
-            'username': config.USERNAME,
-            'password': config.PASSWORD,
-            'scope': (['audio']),
-        }
-
-        client_id = config.CLIENT_ID
-
-        tracks = get_audio(*get_token(client_id, **user))
+        tracks = get_audio(token, uid)
         # todo support albums
         # todo fetch lyrics
         save_tracks(playlist, tracks)
@@ -165,7 +190,7 @@ def main():
     else:
         tracks = list(open_tracks(playlist))
 
-    download_tracks(tracks, 'files')
+    download_tracks(tracks, token, uid, 'files')
 
     print 'done.'
 
