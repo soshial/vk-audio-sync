@@ -7,14 +7,12 @@ import json
 import codecs
 import re
 import HTMLParser
-from mutagen.easyid3 import EasyID3
-# from mutagen.mp3 import EasyMP3 as MP3
-from mutagen.id3 import ID3NoHeaderError
+
+from mutagen.id3 import ID3, TIT2, TPE1, USLT, ID3NoHeaderError
 
 import vk_api
 import config
 
-from time import time
 from progressbar import ProgressBar
 
 
@@ -41,8 +39,16 @@ def get_audio(token, uid):
         return res.get('response')
 
 
+def get_audio_alb(token, uid, album_id):
+    res = vk_api.call_method('audio.getCount', {'oid': uid}, token)
+    audio_cnt = res.get('response')
+
+    if audio_cnt and audio_cnt > 0:
+        res = vk_api.call_method('audio.get', {'count': audio_cnt, 'album_id': album_id}, token)
+        return res.get('response')
+
+
 def clean_audio_tag(tag):
-    # todo support utf8
     h = HTMLParser.HTMLParser()
     tag = h.unescape(tag)
     tag = h.unescape(tag)  # need to unescape unescaped entities
@@ -58,28 +64,17 @@ def clean_audio_tag(tag):
     return tag
 
 
-def set_id3(filename, **track):
+def set_id3(filename, lyr_text, **track):
     try:
-        mp3info = EasyID3(filename)
+        mp3info = ID3(filename, v2_version=3)
     except ID3NoHeaderError:
-        mp3info = EasyID3()
+        mp3info = ID3()
 
-    mp3info['title'] = track.get('title')
-    mp3info['artist'] = track.get('artist')
-    mp3info.save(filename)
-
-
-# def set_id3(filename, **track):
-#     try:
-#         mp3info = MP3(filename)
-#     except ID3NoHeaderError:
-#         mp3info = ID3()
-# 
-#     mp3info['artist'] = track.get('artist')
-#     mp3info['TIT2'] = TIT2(encoding=3, text=track.get('title'))
-#     mp3info.save(filename)
-#     print(mp3info)
-#     quit()
+    mp3info['TIT2'] = TIT2(encoding=3, text=track.get('title'))
+    mp3info['TPE1'] = TPE1(encoding=3, text=track.get('artist'))
+    if lyr_text:
+        mp3info[u'ENG||USLT'] = (USLT(encoding=3, lang=u'eng', desc=u'desc', text=lyr_text)) #::'eng'
+    mp3info.save(filename, v2_version=3)
 
 
 def save_tracks(filename, tracks):
@@ -95,8 +90,8 @@ def save_tracks(filename, tracks):
             fp.write('%s\n' % ('\t'.join([unicode(track.get(f,"")) for f in fields])))
 
 
-def open_tracks(filename):
-    with codecs.open(filename, 'r', 'utf8') as fp:
+def open_tracks(filepath):
+    with codecs.open(filepath, 'r', 'utf8') as fp:
         firstline = fp.next()
         fields = firstline.rstrip('\n').split('\t')
         for line in fp:
@@ -147,16 +142,16 @@ def download_tracks(tracks, token, uid, storage_path='files'):
             if total:
                 bar.finish()
 
-            set_id3(filepath, **track)  # todo fix id3
-
+            lyr_text = ''
             if track.get('lyrics_id'):
                 print "Lyrics exist!"
                 track['lyrics_id'] = clean_audio_tag(track.get('lyrics_id'))
                 res = vk_api.call_method('audio.getLyrics', {'lyrics_id': track['lyrics_id']}, token)
+                lyr_text = res.get('response')['text']
                 with codecs.open(filepath + '.txt', 'w', encoding='utf-8') as lyr_file:
-                    lyr_file.write(res.get('response')['text'])
+                    lyr_file.write(lyr_text)
                     lyr_file.close()
-
+            set_id3(filepath, lyr_text, **track)
             track_cnt += 1
 
         except urllib2.HTTPError, err:
@@ -181,12 +176,13 @@ def main():
     token, uid = get_token(client_id, **user)
 
     if not os.path.isfile(playlist):
-
         tracks = get_audio(token, uid)
-        # todo support albums
-        # todo fetch lyrics
         save_tracks(playlist, tracks)
-
+        res_albums = vk_api.call_method('audio.getAlbums', {'owner_id': uid}, token).get('response')[1:]
+        for album in res_albums:
+            print 'Saving album ' + album['title']+ str(album['album_id'])
+            res_alb_tracks = get_audio_alb(token, uid, album['album_id'])
+            save_tracks('alb_' + str(album['album_id']) + '_' + album['title'], res_alb_tracks)
     else:
         tracks = list(open_tracks(playlist))
 
